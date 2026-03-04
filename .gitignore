@@ -1,0 +1,5 @@
+*.pyc
+*log.txt
+*parameters.txt
+*summary.txt
+.vscode/settings.json
