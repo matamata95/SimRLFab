@@ -6,11 +6,11 @@ Heuristic Decision Agents
 
 class Decision_Heuristic(object):
     def __init__(self, env, statistics, parameters, resources, agents, agents_resource):
+        self.env = env        
         self.statistics = statistics
         self.parameters = parameters
         self.resources = resources
         self.agents = agents
-        self.env = env
         self.agents_resource = agents_resource
         agents.update({'Decision_Heuristic_Transp' : []})
         agents.update({'Decision_Heuristic_Machine' : []})
@@ -79,7 +79,7 @@ class Decision_Heuristic_Transp_EMPTY(Decision_Heuristic):
         return result_order, result_dest
 
 class Decision_Heuristic_Transp_FIFO(Decision_Heuristic):
-    """Selects the next transportation order for a transportation agent based on the total order waiting time"""
+    """Selects the next transportation order for a transportation agent based on FIFO sorted machine ID"""
     def __init__(self, env, statistics, parameters, resources, agents, agents_resource):
         super(self.__class__, self).__init__(env=env, statistics=statistics, parameters=parameters, resources=resources, agents=agents, agents_resource=agents_resource)
         agents['Decision_Heuristic_Transp'].append(self)
@@ -103,6 +103,7 @@ class Decision_Heuristic_Machine_FIFO(Decision_Heuristic):
         agents['Decision_Heuristic_Machine'].append(self)
         print("FIFO_Machine_Decision created")
 
+# Unsure how it works, its returning the first order in the list of states through the loop, why not just return states[0]?
     def act(self, states):
         if states == None:
             return None
