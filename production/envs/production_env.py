@@ -53,6 +53,13 @@ class ProductionEnv(Environment):
             agent = Transport.agents_waiting_for_action.pop(0)
 
             if self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'direct':
+                policy_action = [int(actions)]
+            elif self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'resource':
+                policy_action = [int(actions[0]), int(actions[1])]
+            else:
+                policy_action = [int(actions)]
+
+            if self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'direct':
                 agent.next_action = [int(actions)]
             elif self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'resource':
                 agent.next_action = [int(actions[0]), int(actions[1])]
@@ -80,6 +87,24 @@ class ProductionEnv(Environment):
             self.statistics['stat_agent_reward'][-1][4] = round(reward, 5)
             self.statistics['stat_agent_reward'][-1][5] = agent.next_action_valid
             self.statistics['stat_agent_reward'].append([self.count_episode, self.counter, round(self.env.now, 5), None, None, None, states])
+
+            if self.parameters.get('XRL_ENABLE', False):
+                xrl_data = agent.build_xrl_explanation(policy_action=policy_action, reward=reward)
+                self.statistics['stat_xrl'].append([
+                    self.count_episode,
+                    self.counter,
+                    round(self.env.now, 5),
+                    xrl_data['policy_action'],
+                    xrl_data['executed_action'],
+                    xrl_data['action_valid'],
+                    xrl_data['action_type'],
+                    xrl_data['origin_id'],
+                    xrl_data['destination_id'],
+                    xrl_data['order_id'],
+                    xrl_data['reward'],
+                    xrl_data['context_json'],
+                    xrl_data['top_alternatives_json']
+                ])
 
             return states, terminal, reward
 
@@ -306,12 +331,17 @@ class ProductionEnv(Environment):
         os.fsync(self.statistics['episode_log'].fileno())
         
         pd.DataFrame(self.statistics['stat_agent_reward'][:-1]).to_csv(self.parameters['PATH_TIME'] + "_agent_reward_log.txt", header=None, index=None, sep=',', mode='a')
+        if self.parameters.get('XRL_ENABLE', False) and len(self.statistics['stat_xrl']) > 0:
+            pd.DataFrame(self.statistics['stat_xrl'], columns=self.statistics['xrl_log_header']).to_csv(
+                self.parameters['PATH_TIME'] + "_xrl_log.txt", header=False, index=None, sep=',', mode='a'
+            )
 
         # Reset statistics for episode
         self.last_export_time = self.env.now
         self.last_export_real_time = datetime.now()
         self.statistics['stat_inv_episode'] = [self.statistics['stat_inv_episode'][-1]]
         self.statistics['stat_agent_reward'] = [self.statistics['stat_agent_reward'][-1]]
+        self.statistics['stat_xrl'] = []
         self.statistics['stat_transp_selected_idle'] = np.array([0] * self.parameters['NUM_TRANSP_AGENTS'])
         self.statistics['stat_transp_forced_idle'] = np.array([0] * self.parameters['NUM_TRANSP_AGENTS'])
         self.statistics['stat_transp_threshold_waiting_reached'] = np.array([0] * self.parameters['NUM_TRANSP_AGENTS'])

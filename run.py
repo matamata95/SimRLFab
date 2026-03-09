@@ -6,8 +6,8 @@ from tensorforce.execution import Runner
 
 # tf.set_random_seed(10)
 
-timesteps = 10 ** 2  # Set time steps per episode
-episodes = 10 ** 2  # Set number of episodes
+timesteps = 10 ** 3  # Set time steps per episode
+episodes = 10 ** 3  # Set number of episodes
 
 environment_production = Environment.create(environment='production.envs.ProductionEnv',
                                             max_episode_timesteps=timesteps)

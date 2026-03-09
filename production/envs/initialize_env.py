@@ -76,6 +76,9 @@ def extend_agent_parameters(parameters):
     parameters.update({'TRANSP_AGENT_EMPTY_ACTION': False})  # Alternatives: True, False
     parameters.update({'TRANSP_AGENT_CONWIP_INV': 15})  # ConWIP inventory target if conwip reward is selected
     parameters.update({'WAITING_TIME_THRESHOLD': 1000})  # Forced order transport if threshold reached
+    # XRL: local counterfactual explanations for each RL action.
+    parameters.update({'XRL_ENABLE': True})
+    parameters.update({'XRL_TOP_K': 3})
 
 def extend_production_parameters(parameters):
     parameters.update({'NUM_TRANSP_AGENTS': 1})  # Number of transportation resources
@@ -178,6 +181,7 @@ def define_production_statistics(parameters):
     statistics.update({'stat_inv_episode': [[0.0, 0]]})
 
     statistics.update({'stat_agent_reward': [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]})
+    statistics.update({'stat_xrl': []})
 
     statistics.update({'agent_reward_log': open(parameters['PATH_TIME'] + "_agent_reward_log.txt", "w")})
     statistics.update({'episode_log': open(parameters['PATH_TIME'] + "_episode_log.txt", "w")})
@@ -203,6 +207,14 @@ def define_production_statistics(parameters):
     string = "episode,sim_step,sim_time,action,reward,action_valid,state"
     statistics['agent_reward_log'].write("%s\n" % (string))
     statistics['agent_reward_log'].close()
+
+    # XRL Logger
+    statistics.update({'xrl_log_header': ['episode', 'sim_step', 'sim_time', 'policy_action', 'executed_action',
+                                          'action_valid', 'action_type', 'origin_id', 'destination_id', 'order_id',
+                                          'reward', 'context_json', 'top_alternatives_json']})
+    pd.DataFrame(columns=statistics['xrl_log_header']).to_csv(
+        parameters['PATH_TIME'] + "_xrl_log.txt", index=False, sep=','
+    )
 
     # Temp statistics
     for stat in statistics['episode_statistics']:

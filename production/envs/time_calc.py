@@ -5,7 +5,13 @@ class Time_calc:
     def __init__(self, parameters, episode):
         self.parmeters = parameters
 
-        """Random Seed for random numbers"""
+        """Random Seed for random numbers.
+        
+           np.random.RandomState gets a random state by using np.random.randint(100)
+           where each instance of the machine gets a different random state with callable
+           functions like .randint, .rand, .exponential etc. to generate random states.
+           the RandomState is depending on the 'SEED' parameter and the episode number to
+           ensure reproducibility and different random states for each episode."""
         np.random.seed(parameters['SEED'] + episode)
         self.randomStreams = {}
         self.randomStreams["process_time"] = [np.random.RandomState(np.random.randint(100)) for i in range(parameters['NUM_MACHINES'])]
@@ -64,13 +70,13 @@ class Time_calc:
         return result_time
 
     def repair_time(self, machine, statistics, parameters):
-        """Return time until next failure for a machine."""
+        """Return time until repair is completed for a machine."""
         result_time = self.randomStreams["repair_time"][machine.id].exponential(scale=parameters['MTOL'][machine.id])
         statistics['stat_machines_broken'][machine.id] += result_time
         return result_time
 
     def time_to_order_generation(self, source, statistics, parameters):
-        """Return time until next failure for a machine."""
+        """Return time until next order generation for a source."""
         result_time = self.randomStreams["order_generation"][source.id - self.parmeters['NUM_MACHINES']].exponential(scale=parameters['MTOG'][source.id])
         return result_time
 

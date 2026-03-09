@@ -5,7 +5,8 @@ from production.envs.transport import *
 import simpy
 
 class Order(Resource):
-    """An order specifices a production request.
+    """
+    An order specifies a production request.
     An order has a *id* and a sequence of *prod_steps* to fulfill.
     """
 
@@ -15,8 +16,8 @@ class Order(Resource):
         self.id = id
         self.prod_steps = prod_steps
         self.variant = variant
-        self.sop = -1
-        self.eop = -1
+        self.sop = -1 # SOP = start of production
+        self.eop = -1 # EOP = end of production
         self.time_processing = 0
         self.time_handling = 0
         self.actual_step = 0

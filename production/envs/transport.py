@@ -4,7 +4,10 @@ from production.envs.resources import *
 from production.envs.reward_functions import *
 import simpy
 import numpy as np
+import json
 
+# Resource is a class from production.envs.resources which includes
+# statistics, parameters, resources, agents, time_calc, location objects
 class Transport(Resource):
     all_transp_orders = []  # Overall list of available transport orders
     agents_waiting_for_action = []
@@ -14,8 +17,9 @@ class Transport(Resource):
         print("Transportation %s created" % id)
         self.env = env
         self.id = id
+        self.resp_area = resp_area   
+        self.agent_type = agent_type     
         self.label = label
-        self.resp_area = resp_area
         self.type = "transp"
         self.idle = env.event()
         self.current_location = self.time_calc.randomStreams["transp_agent"][self.id].choice(
@@ -28,7 +32,6 @@ class Transport(Resource):
         self.last_handling_time = 0.0
         self.last_handling_start = 0.0
         self.env.process(self.transporting())  # Processed started on creation of resource
-        self.agent_type = agent_type
         self.mapping = None
         if self.agent_type == "FIFO":
             self.agent = Decision_Heuristic_Transp_FIFO(env=self.env, statistics=statistics, parameters=parameters,
@@ -86,6 +89,138 @@ class Transport(Resource):
 
     def in_resp_area(self, order):
         return self.resp_area[order.current_location.id][order.get_next_step().id]
+
+    def _decode_action(self, action):
+        """Translate raw RL action to semantic origin/destination resources."""
+        if self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'direct':
+            action_id = int(action[0])
+            action_origin = self.mapping[action_id][0]
+            action_destination = self.mapping[action_id][1]
+            return action_id, action_origin, action_destination
+        action_id = [int(action[0]), int(action[1])]
+        action_origin = self.mapping[action_id[0]]
+        action_destination = self.mapping[action_id[1]]
+        return action_id, action_origin, action_destination
+
+    def _valid_order_count_for_pair(self, origin, destination):
+        """Count currently valid orders for a given (origin, destination) action pair."""
+        if origin == -1 or destination == -1:
+            return 0, None
+
+        waiting_times = []
+        for order in [x for x in Transport.all_transp_orders if not x.reserved and x.current_location == origin]:
+            if destination.type == "machine" and order.get_next_step().type == "machine":
+                if order.get_next_step().machine_group == destination.machine_group and destination.is_free():
+                    waiting_times.append(order.get_total_waiting_time())
+            elif order.get_next_step() == destination:
+                waiting_times.append(order.get_total_waiting_time())
+
+        if len(waiting_times) == 0:
+            return 0, None
+        return len(waiting_times), max(waiting_times)
+
+    def _score_counterfactual_action(self, action):
+        """Score one action with interpretable terms for ranked alternatives."""
+        _, origin, destination = self._decode_action(action)
+
+        if origin == -1 and destination == -1:
+            return {
+                'action': action,
+                'action_type': 'waiting',
+                'valid': True,
+                'origin_id': -1,
+                'destination_id': -1,
+                'score': float(self.parameters['TRANSP_AGENT_REWARD_WAITING_ACTION']),
+                'reason': 'waiting_action'
+            }
+
+        if origin == -1 and destination != -1:
+            move_time = self.parameters['TRANSP_TIME'][self.current_location.id][destination.id]
+            norm_move = move_time / max(self.parameters['MAX_TRANSP_TIME'], self.parameters['EPSILON'])
+            return {
+                'action': action,
+                'action_type': 'empty',
+                'valid': True,
+                'origin_id': -1,
+                'destination_id': int(destination.id),
+                'score': float(-norm_move),
+                'reason': 'empty_reposition'
+            }
+
+        valid_count, max_wait = self._valid_order_count_for_pair(origin=origin, destination=destination)
+        if valid_count == 0:
+            return {
+                'action': action,
+                'action_type': 'dispatch',
+                'valid': False,
+                'origin_id': int(origin.id),
+                'destination_id': int(destination.id),
+                'score': -1.0,
+                'reason': 'no_matching_unreserved_order'
+            }
+
+        wait_threshold = max(float(self.parameters['WAITING_TIME_THRESHOLD']), 1.0)
+        wait_score = min(float(max_wait) / wait_threshold, 2.0)
+        move_to_origin = self.parameters['TRANSP_TIME'][self.current_location.id][origin.id]
+        move_delivery = self.parameters['TRANSP_TIME'][origin.id][destination.id]
+        norm_distance = (move_to_origin + move_delivery) / max(2.0 * self.parameters['MAX_TRANSP_TIME'], self.parameters['EPSILON'])
+        sink_bonus = 1.0 if destination.type == 'sink' else 0.5
+        score = 1.5 * wait_score + sink_bonus - norm_distance
+
+        return {
+            'action': action,
+            'action_type': 'dispatch',
+            'valid': True,
+            'origin_id': int(origin.id),
+            'destination_id': int(destination.id),
+            'score': float(score),
+            'reason': 'valid_dispatch_candidate'
+        }
+
+    def build_xrl_explanation(self, policy_action, reward):
+        """Return context plus top-k ranked alternatives for action explainability."""
+        executed_order_id = self.next_action_order.id if self.next_action_order not in [None, -1] else -1
+        executed_origin_id = self.next_action_origin.id if self.next_action_origin not in [None, -1] else -1
+        executed_destination_id = self.next_action_destination.id if self.next_action_destination not in [None, -1] else -1
+
+        waiting_orders = [x for x in Transport.all_transp_orders if not x.reserved]
+        max_wait = max([x.get_total_waiting_time() for x in waiting_orders], default=0.0)
+        context = {
+            'current_location': int(self.current_location.id),
+            'open_orders': int(len(waiting_orders)),
+            'max_open_order_wait': float(round(max_wait, 5)),
+            'invalid_counter': int(self.invalid_counter)
+        }
+
+        candidates = []
+        if self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'direct':
+            for action_id in range(len(self.mapping)):
+                candidates.append(self._score_counterfactual_action([action_id]))
+        else:
+            for origin_idx in range(len(self.mapping)):
+                for destination_idx in range(len(self.mapping)):
+                    candidates.append(self._score_counterfactual_action([origin_idx, destination_idx]))
+
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        top_k = int(self.parameters.get('XRL_TOP_K', 3))
+        top_candidates = candidates[:top_k]
+
+        executed_action = policy_action
+        if self.parameters['TRANSP_AGENT_ACTION_MAPPING'] == 'direct':
+            executed_action = [int(policy_action[0])]
+
+        return {
+            'policy_action': policy_action,
+            'executed_action': executed_action,
+            'action_valid': bool(self.next_action_valid),
+            'action_type': 'dispatch' if self.next_action_order not in [None, -1] else ('waiting' if self.next_action_destination == -1 else 'empty'),
+            'origin_id': int(executed_origin_id),
+            'destination_id': int(executed_destination_id),
+            'order_id': int(executed_order_id),
+            'reward': float(round(reward, 5)),
+            'context_json': json.dumps(context),
+            'top_alternatives_json': json.dumps(top_candidates)
+        }
 
     @classmethod
     def put(cls, order, trans_agents):
